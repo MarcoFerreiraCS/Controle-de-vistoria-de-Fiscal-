@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Controle de Vistorias - SAAEB</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --primary: #005696;
+      --secondary: #0084d6;
+      --bg: #f4f7f9;
+      --card-bg: #ffffff;
+      --danger: #d93025;
+      --success: #1e8e3e;
+      --warning: #f9ab00;
+      --border: #dadce0;
+    }
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: var(--bg); margin: 0; padding: 20px; color: #333; display: flex; flex-direction: column; min-height: 100vh; }
+    .container { max-width: 950px; margin: 0 auto; flex: 1; width: 100%; }
+    header { background: var(--primary); color: white; padding: 18px 24px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 1.3rem; }
+    header p { margin: 4px 0 0; font-size: 0.85rem; opacity: 0.9; }
+    .grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 20px; }
+    @media(max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid var(--border); }
+    h2 { font-size: 1.1rem; margin-top: 0; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; }
+    input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.9rem; }
+    .slots { display: flex; gap: 10px; margin: 15px 0; }
+    .slot-box { flex: 1; padding: 12px; border-radius: 6px; border: 1px solid var(--border); text-align: center; background: #fafafa; }
+    .slot-box.full { background: #fce8e6; border-color: var(--danger); color: var(--danger); }
+    .slot-box.available { background: #e6f4ea; border-color: var(--success); color: var(--success); }
+    .slot-count { font-size: 1.4rem; font-weight: bold; }
+    .btn { display: inline-block; padding: 10px 16px; border-radius: 4px; border: none; cursor: pointer; font-weight: 600; font-size: 0.9rem; width: 100%; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--secondary); }
+    .btn-danger { background: var(--danger); color: white; width: auto; padding: 5px 8px; font-size: 0.8rem; }
+    .btn-warning { background: var(--warning); color: #202124; margin-top: 8px; }
+    .table-container { overflow-x: auto; margin-top: 15px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { padding: 9px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+    th { background: #f1f3f4; }
+    .badge { padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+    .badge-manha { background: #e8f0fe; color: #1a73e8; }
+    .badge-tarde { background: #fef7e0; color: #b06000; }
+    .status-sync { font-size: 0.75rem; color: #34a853; display: flex; align-items: center; gap: 5px; margin-top: 4px; }
+    .dot { width: 8px; height: 8px; background-color: #34a853; border-radius: 50%; display: inline-block; }
+    .alert { padding: 10px; border-radius: 4px; margin-bottom: 12px; font-size: 0.85rem; display: none; }
+    .alert-danger { background: #fce8e6; color: var(--danger); display: block; }
+    footer { text-align: center; padding: 25px 0 10px; color: #666; font-size: 0.85rem; }
+    @media print {
+      body * { visibility: hidden; }
+      #printArea, #printArea * { visibility: visible; }
+      #printArea { position: absolute; left: 0; top: 0; width: 100%; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>SAAEB • Agendamento de Vistorias de Vazamento</h1>
+        <p>Micromedição / Fiscalização - Controle Diário de Capacidade</p>
+        <div class="status-sync"><span class="dot"></span> Conexão em tempo real ativa</div>
+      </div>
+      <button class="btn btn-primary no-print" style="width: auto; background: white; color: var(--primary);" onclick="window.print()">Imprimir Roteiro</button>
+    </header>
+
+    <div class="grid">
+      <!-- Formulário de Agendamento -->
+      <div class="card no-print">
+        <h2>Marcar Nova Vistoria</h2>
+        <div id="formAlert" class="alert"></div>
+        
+        <div class="form-group">
+          <label>Data da Vistoria:</label>
+          <input type="date" id="dataInput" onchange="carregarDadosDia()">
+        </div>
+
+        <div class="slots">
+          <div id="slotManha" class="slot-box">
+            <div>Manhã (08h às 11h)</div>
+            <div id="countManha" class="slot-count">0/3</div>
+          </div>
+          <div id="slotTarde" class="slot-box">
+            <div>Tarde (14h às 16h)</div>
+            <div id="countTarde" class="slot-count">0/3</div>
+          </div>
+        </div>
+
+        <form id="vistoriaForm" onsubmit="salvarVistoria(event)">
+          <div class="form-group">
+            <label>Período:</label>
+            <select id="periodoSelect" required>
+              <option value="manha">Manhã (08h às 11h)</option>
+              <option value="tarde">Tarde (14h às 16h)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Nº da UC (Unidade Consumidora):</label>
+            <input type="text" id="ucInput" placeholder="Ex: 104523" required autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label>Endereço e Número:</label>
+            <input type="text" id="enderecoInput" placeholder="Rua / Av e Nº" required autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label>Bairro:</label>
+            <input type="text" id="bairroInput" placeholder="Bairro" required autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label>Observação / Motivo:</label>
+            <textarea id="motivoInput" rows="2" placeholder="Ex: Suspeita no cavalete, hidrômetro girando direto..."></textarea>
+          </div>
+
+          <button type="submit" id="btnSalvar" class="btn btn-primary">Cadastrar Vistoria</button>
+        </form>
+
+        <button type="button" id="btnBloquear" class="btn btn-warning" onclick="alternarBloqueioDia()">Bloquear / Anular este Dia</button>
+      </div>
+
+      <!-- Calendário e Roteiro do Dia -->
+      <div class="card" id="printArea">
+        <h2>Roteiro do Fiscal - <span id="dataTituloDisplay"></span></h2>
+        <div id="diaBloqueadoAviso" class="alert alert-danger" style="display: none;">
+          ⚠️ <strong>ATENÇÃO:</strong> Este dia está BLOQUEADO para vistorias (feriado ou serviço interno).
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Período</th>
+                <th>UC</th>
+                <th>Endereço / Bairro</th>
+                <th>Motivo</th>
+                <th class="no-print">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tabelaVistorias"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <footer class="no-print">
+      Desenvolvido por Marco Aurelio Ferreira - copyright - 2026
+    </footer>
+  </div>
+
+  <script>
+    const socket = io();
+    const dataInput = document.getElementById('dataInput');
+    const periodoSelect = document.getElementById('periodoSelect');
+    const btnSalvar = document.getElementById('btnSalvar');
+    const btnBloquear = document.getElementById('btnBloquear');
+    const formAlert = document.getElementById('formAlert');
+    const diaBloqueadoAviso = document.getElementById('diaBloqueadoAviso');
+
+    // Data inicial
+    dataInput.value = new Date().toISOString().split('T')[0];
+
+    // Escuta evento do servidor quando qualquer uma das 3 máquinas faz alteração
+    socket.on('atualizacao_agenda', ({ data }) => {
+      if (dataInput.value === data) {
+        carregarDadosDia();
+      }
+    });
+
+    function formatarDataBR(dataIso) {
+      if (!dataIso) return '';
+      const [ano, mes, dia] = dataIso.split('-');
+      return `${dia}/${mes}/${ano}`;
+    }
+
+    async function carregarDadosDia() {
+      const data = dataInput.value;
+      if (!data) return;
+
+      document.getElementById('dataTituloDisplay').innerText = formatarDataBR(data);
+
+      const d = new Date(data + 'T00:00:00');
+      const isFimDeSemana = (d.getDay() === 0 || d.getDay() === 6);
+
+      try {
+        const res = await fetch(`/api/dia/${data}`);
+        const info = await res.json();
+
+        formAlert.style.display = 'none';
+        diaBloqueadoAviso.style.display = info.bloqueado ? 'block' : 'none';
+
+        if (isFimDeSemana) {
+          formAlert.className = 'alert alert-danger';
+          formAlert.innerText = 'Não há atendimento aos finais de semana.';
+          formAlert.style.display = 'block';
+          btnSalvar.disabled = true;
+          btnBloquear.disabled = true;
+        } else if (info.bloqueado) {
+          btnSalvar.disabled = true;
+          btnBloquear.innerText = 'Desbloquear este Dia';
+          btnBloquear.disabled = false;
+        } else {
+          btnSalvar.disabled = false;
+          btnBloquear.innerText = 'Bloquear / Anular este Dia';
+          btnBloquear.disabled = false;
+        }
+
+        const manhaCount = info.vistorias.filter(v => v.periodo === 'manha').length;
+        const tardeCount = info.vistorias.filter(v => v.periodo === 'tarde').length;
+
+        document.getElementById('countManha').innerText = `${manhaCount}/3`;
+        document.getElementById('slotManha').className = `slot-box ${manhaCount >= 3 ? 'full' : 'available'}`;
+
+        document.getElementById('countTarde').innerText = `${tardeCount}/3`;
+        document.getElementById('slotTarde').className = `slot-box ${tardeCount >= 3 ? 'full' : 'available'}`;
+
+        const optManha = periodoSelect.querySelector('option[value="manha"]');
+        const optTarde = periodoSelect.querySelector('option[value="tarde"]');
+        optManha.disabled = manhaCount >= 3;
+        optTarde.disabled = tardeCount >= 3;
+
+        if (optManha.disabled && !optTarde.disabled) periodoSelect.value = 'tarde';
+        else if (!optManha.disabled) periodoSelect.value = 'manha';
+
+        if (manhaCount >= 3 && tardeCount >= 3 && !info.bloqueado && !isFimDeSemana) {
+          formAlert.className = 'alert alert-danger';
+          formAlert.innerText = 'Limite diário de 6 vistorias atingido para esta data.';
+          formAlert.style.display = 'block';
+          btnSalvar.disabled = true;
+        }
+
+        renderizarTabela(info.vistorias);
+      } catch (err) {
+        console.error('Falha ao carregar dados:', err);
+      }
+    }
+
+    async function salvarVistoria(e) {
+      e.preventDefault();
+      const payload = {
+        data: dataInput.value,
+        periodo: periodoSelect.value,
+        uc: document.getElementById('ucInput').value.trim(),
+        endereco: document.getElementById('enderecoInput').value.trim(),
+        bairro: document.getElementById('bairroInput').value.trim(),
+        motivo: document.getElementById('motivoInput').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/vistorias', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.error || 'Erro ao agendar.');
+          return;
+        }
+
+        document.getElementById('ucInput').value = '';
+        document.getElementById('enderecoInput').value = '';
+        document.getElementById('bairroInput').value = '';
+        document.getElementById('motivoInput').value = '';
+        carregarDadosDia();
+      } catch (err) {
+        alert('Erro de comunicação com o servidor.');
+      }
+    }
+
+    async function excluirVistoria(id) {
+      if (!confirm('Deseja realmente cancelar esta vistoria? A vaga será liberada.')) return;
+      try {
+        await fetch(`/api/vistorias/${id}`, { method: 'DELETE' });
+        carregarDadosDia();
+      } catch (err) {
+        alert('Erro ao excluir vistoria.');
+      }
+    }
+
+    async function alternarBloqueioDia() {
+      const data = dataInput.value;
+      if (!data) return;
+      try {
+        await fetch('/api/bloqueios/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data })
+        });
+        carregarDadosDia();
+      } catch (err) {
+        alert('Erro ao alterar bloqueio do dia.');
+      }
+    }
+
+    function renderizarTabela(lista) {
+      const tbody = document.getElementById('tabelaVistorias');
+      tbody.innerHTML = '';
+
+      if (lista.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#777; padding:20px;">Nenhuma vistoria agendada para este dia.</td></tr>';
+        return;
+      }
+
+      lista.forEach(item => {
+        const tr = document.createElement('tr');
+        const badgeClass = item.periodo === 'manha' ? 'badge-manha' : 'badge-tarde';
+        const labelPeriodo = item.periodo === 'manha' ? 'Manhã (08h-11h)' : 'Tarde (14h-16h)';
+
+        tr.innerHTML = `
+          <td><span class="badge ${badgeClass}">${labelPeriodo}</span></td>
+          <td><strong>${item.uc}</strong></td>
+          <td>${item.endereco} - ${item.bairro}</td>
+          <td>${item.motivo || '-'}</td>
+          <td class="no-print">
+            <button class="btn btn-danger" onclick="excluirVistoria(${item.id})">Cancelar</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    carregarDadosDia();
+  </script>
+</body>
+</html>
